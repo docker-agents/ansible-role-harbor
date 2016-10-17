@@ -1,0 +1,12 @@
+---
+# defaults file for harbor
+harbor_appname 
+harbor_runmode 
+
+harbor_dev_httpport 
+
+smtp_host 
+smtp_port 
+smtp_username 
+smtp_password 
+email_from 

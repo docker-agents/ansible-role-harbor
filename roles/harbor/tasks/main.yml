@@ -1,0 +1,110 @@
+---
+- name: ensure data folders
+  file: path=/var/lib/harbor/{{ item }} mode=0755 state=directory
+  with_items:
+    - database
+    - logs
+    - job_logs
+    - registry
+
+- name: ensure config folder
+  file: path=/etc/harbor/ mode=0755 state=directory
+
+- name: copy config files
+  copy: src=config/{{ item }} dest=/etc/harbor  mode=0644
+  with_items:
+    - db
+    - jobservice
+    - nginx
+    - registry
+    - ui
+
+- name: add app.config
+  template: src=app.conf dest=/etc/harbor/ui/app.conf mode=0644
+
+- name: install ui
+  docker_container:
+    name: ui
+    image: jcali/ui
+    restart_policy: always
+    links:
+      - "mysql:mysql"
+    env:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USR: root
+      MYSQL_PWD: "{{harbor_db_pass}}"
+      REGISTRY_URL: http://registry:5000
+      UI_URL: http://ui
+      CONFIG_PATH: /etc/ui/app.conf
+      HARBOR_REG_URL: "{{inventory_hostname}}"
+      HARBOR_ADMIN_PASSWORD: "{{harbor_admin_pass}}"
+      HARBOR_URL: http://{{inventory_hostname}}
+      AUTH_MODE: db_auth
+      LDAP_URL: ldaps://ldap.mydomain.com
+      LDAP_BASE_DN: "uid=%s,ou=people,dc=mydomain,dc=com"
+      UI_SECRET: "{{harbor_ui_secret}}"
+      SELF_REGISTRATION: "on"
+      USE_COMPRESSED_JS: "on"
+      LOG_LEVEL: debug
+      GODEBUG: "netdns=cgo"
+      EXT_ENDPOINT: http://{{inventory_hostname}}
+      TOKEN_URL: http://ui
+      VERIFY_REMOTE_CERT: "on"
+      TOKEN_EXPIRATION: 30
+    ports:
+      - "8000:80"
+    volumes:
+      - /etc/harbor/ui/app.conf:/etc/ui/app.conf
+      - /etc/harbor/ui/private_key.pem:/etc/ui/private_key.pem
+
+- name: install jobservice
+  docker_container:
+    name: jobservice
+    image: jcali/jobservice
+    restart_policy: always
+    links:
+      - "mysql:mysql"
+    env:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_USR: root
+      MYSQL_PWD: "{{harbor_db_pass}}"
+      UI_SECRET: "{{harbor_ui_secret}}"
+      CONFIG_PATH: /etc/jobservice/app.conf
+      REGISTRY_URL: http://registry:5000
+      VERIFY_REMOTE_CERT: "on"
+      MAX_JOB_WORKERS: 3
+      LOG_LEVEL: debug
+      LOG_DIR: /var/log/jobs
+      GODEBUG: "netdns=cgo"
+      EXT_ENDPOINT: http://{{inventory_hostname}}
+      TOKEN_URL: http://ui
+    volumes:
+      - /var/lib/harbor/job_logs:/var/log/jobs
+      - /etc/harbor/jobservice/app.conf:/etc/jobservice/app.conf
+
+- name: Create certs directory
+  file: path=/etc/nginx/cert mode=0755 state=directory
+
+- name: add certificate
+  copy: dest="/etc/nginx/cert/celloproject.io.crt" content="{{ celloproject_io_certificate }}"
+
+- name: add key
+  copy: dest="/etc/nginx/cert/celloproject.io.key" content="{{ celloproject_io_private_key }}"
+
+- name: set up nginx
+  docker_container:
+    name: nginx
+    image: library/nginx:1.9.0
+    restart_policy: always
+    ports:
+      - "80:80"
+      - "443:443"
+    links:
+      - "mysql:mysql"
+      - "registry:registry"
+      - "ui:ui"
+    volumes:
+      - "/etc/harbor/nginx:/etc/nginx/"
+      - "/etc/nginx/cert/:/etc/nginx/cert/"
